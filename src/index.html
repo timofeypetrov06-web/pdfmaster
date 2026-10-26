@@ -1,0 +1,450 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>PDF Мастер</title>
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; worker-src 'self' blob:; font-src 'self' data: blob:">
+<script src="vendor/pdf-lib.min.js"></script>
+<script src="vendor/pdf.min.js"></script>
+<script src="vendor/jszip.min.js"></script>
+<style>
+  :root {
+    --bg: #f6f7fb; --surface: #ffffff; --text: #1d2130; --muted: #667085;
+    --border: #e4e7ec; --accent: #4f46e5; --accent-soft: #eef2ff; --on-accent: #ffffff;
+    --danger: #d92d20; --ok: #079455; --shadow: 0 1px 3px rgba(16,24,40,.08), 0 1px 2px rgba(16,24,40,.04);
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #0f1117; --surface: #181b24; --text: #e6e8ef; --muted: #98a2b3;
+      --border: #2a2f3c; --accent: #818cf8; --accent-soft: #23264a; --on-accent: #0f1117;
+      --danger: #f97066; --ok: #47cd89; --shadow: none;
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #0f1117; --surface: #181b24; --text: #e6e8ef; --muted: #98a2b3;
+    --border: #2a2f3c; --accent: #818cf8; --accent-soft: #23264a; --on-accent: #0f1117;
+    --danger: #f97066; --ok: #47cd89; --shadow: none;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text); font: 15px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+  header { background: var(--surface); border-bottom: 1px solid var(--border); }
+  .bar { max-width: 1100px; margin: 0 auto; padding: 14px 16px; display: flex; align-items: center; gap: 12px; }
+  .logo { font-weight: 700; font-size: 18px; cursor: pointer; display: flex; align-items: center; gap: 8px; }
+  .logo span { background: var(--accent); color: var(--on-accent); border-radius: 6px; padding: 2px 6px; font-size: 13px; }
+  main { max-width: 1100px; margin: 0 auto; padding: 24px 16px 64px; }
+  h1 { font-size: 28px; margin: 8px 0 4px; text-align: center; }
+  .sub { color: var(--muted); text-align: center; margin: 0 0 28px; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 14px; }
+  .card { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 18px; cursor: pointer; box-shadow: var(--shadow); transition: border-color .15s, transform .15s; text-align: left; color: inherit; font: inherit; }
+  .card:hover, .card:focus-visible { border-color: var(--accent); transform: translateY(-2px); outline: none; }
+  .card .ic { width: 40px; height: 40px; border-radius: 10px; background: var(--accent-soft); color: var(--accent); display: grid; place-items: center; font-size: 20px; margin-bottom: 10px; }
+  .card b { display: block; margin-bottom: 4px; }
+  .card small { color: var(--muted); }
+  .back { background: none; border: 0; color: var(--accent); cursor: pointer; font: inherit; padding: 0; margin-bottom: 8px; }
+  .drop { border: 2px dashed var(--border); border-radius: 14px; background: var(--surface); padding: 36px 16px; text-align: center; cursor: pointer; transition: border-color .15s, background .15s; }
+  .drop.over { border-color: var(--accent); background: var(--accent-soft); }
+  .btn { background: var(--accent); color: var(--on-accent); border: 0; border-radius: 10px; padding: 12px 22px; font: 600 15px system-ui, sans-serif; cursor: pointer; }
+  .btn:disabled { opacity: .5; cursor: not-allowed; }
+  .btn.ghost { background: transparent; color: var(--accent); border: 1px solid var(--border); padding: 8px 14px; font-weight: 500; }
+  .files { list-style: none; padding: 0; margin: 16px 0; display: grid; gap: 8px; }
+  .files li { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 10px 12px; display: flex; align-items: center; gap: 10px; }
+  .files li .name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .files li .size { color: var(--muted); font-size: 13px; }
+  .icon-btn { background: none; border: 1px solid var(--border); color: var(--text); border-radius: 8px; width: 30px; height: 30px; cursor: pointer; flex: none; }
+  .icon-btn:hover { border-color: var(--accent); }
+  .opts { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 16px; margin: 16px 0; display: grid; gap: 12px; }
+  .opts:empty { display: none; }
+  .opts label { display: grid; gap: 4px; font-size: 14px; color: var(--muted); }
+  .opts input, .opts select { font: inherit; color: var(--text); background: var(--bg); border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px; width: 100%; }
+  .opts input[type=range] { padding: 0; }
+  .row { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 12px; }
+  .pages { display: grid; grid-template-columns: repeat(auto-fill, minmax(130px, 1fr)); gap: 12px; margin: 16px 0; }
+  .page { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 8px; text-align: center; cursor: grab; }
+  .page.dragging { opacity: .4; }
+  .page .thumb { height: 150px; display: grid; place-items: center; overflow: hidden; }
+  .page canvas { max-width: 100%; max-height: 150px; box-shadow: 0 0 0 1px var(--border); transition: transform .2s; background: #fff; }
+  .page .tools { display: flex; justify-content: center; gap: 6px; margin-top: 6px; align-items: center; font-size: 13px; color: var(--muted); }
+  .actions { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
+  .status { color: var(--muted); font-size: 14px; }
+  .status.err { color: var(--danger); }
+  .status.ok { color: var(--ok); }
+  .hint { color: var(--muted); font-size: 13px; margin: 0; }
+  .hidden { display: none !important; }
+</style>
+</head>
+<body>
+<header><div class="bar"><div class="logo" id="logo"><span>PDF</span> Мастер</div></div></header>
+<main>
+  <section id="home">
+    <h1>Все инструменты для PDF в одном месте</h1>
+    <p class="sub">Файлы обрабатываются прямо в браузере и никуда не загружаются.</p>
+    <div class="grid" id="toolGrid"></div>
+  </section>
+
+  <section id="tool" class="hidden">
+    <button class="back" id="back">← Все инструменты</button>
+    <h1 id="toolTitle"></h1>
+    <p class="sub" id="toolDesc"></p>
+    <div class="drop" id="drop" tabindex="0">
+      <button class="btn" type="button" id="pick">Выбрать файлы</button>
+      <p class="hint" style="margin-top:10px">или перетащите их сюда</p>
+      <input type="file" id="input" hidden>
+    </div>
+    <ul class="files" id="files"></ul>
+    <div class="pages" id="pages"></div>
+    <div class="opts" id="opts"></div>
+    <div class="actions">
+      <button class="btn" id="run" disabled>Обработать</button>
+      <span class="status" id="status"></span>
+    </div>
+  </section>
+</main>
+
+<script>
+const { PDFDocument, degrees, StandardFonts, rgb } = PDFLib;
+pdfjsLib.GlobalWorkerOptions.workerSrc = 'vendor/pdf.worker.min.js';
+
+const $ = id => document.getElementById(id);
+const state = { tool: null, files: [], pages: [] };
+
+// ---------- helpers ----------
+const fmtSize = b => b < 1024 * 1024 ? (b / 1024).toFixed(0) + ' КБ' : (b / 1024 / 1024).toFixed(1) + ' МБ';
+const baseName = f => f.name.replace(/\.[^.]+$/, '');
+
+function download(data, name, type = 'application/pdf') {
+  const blob = data instanceof Blob ? data : new Blob([data], { type });
+  const url = URL.createObjectURL(blob);
+  const a = Object.assign(document.createElement('a'), { href: url, download: name });
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 10000);
+}
+
+async function downloadMany(entries, zipName) {
+  if (entries.length === 1) return download(entries[0].data, entries[0].name, entries[0].type);
+  const zip = new JSZip();
+  entries.forEach(e => zip.file(e.name, e.data));
+  download(await zip.generateAsync({ type: 'blob' }), zipName, 'application/zip');
+}
+
+const loadPdf = async file => PDFDocument.load(await file.arrayBuffer());
+const loadPdfJs = async file => pdfjsLib.getDocument({ data: new Uint8Array(await file.arrayBuffer()), isEvalSupported: false }).promise;
+
+async function renderPage(pdf, n, scale) {
+  const page = await pdf.getPage(n);
+  const vp = page.getViewport({ scale });
+  const canvas = document.createElement('canvas');
+  canvas.width = Math.ceil(vp.width); canvas.height = Math.ceil(vp.height);
+  const ctx = canvas.getContext('2d');
+  ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, canvas.width, canvas.height);
+  await page.render({ canvasContext: ctx, viewport: vp }).promise;
+  return canvas;
+}
+
+const canvasBytes = (canvas, type = 'image/jpeg', q = 0.9) =>
+  new Promise(r => canvas.toBlob(b => b.arrayBuffer().then(buf => r(new Uint8Array(buf))), type, q));
+
+// "1-3, 5, 8-" -> [[0,1,2],[4],[7,...]]
+function parseRanges(str, max) {
+  return str.split(',').map(s => s.trim()).filter(Boolean).map(part => {
+    const m = part.match(/^(\d*)\s*-\s*(\d*)$/);
+    let a, b;
+    if (m) { a = m[1] ? +m[1] : 1; b = m[2] ? +m[2] : max; }
+    else if (/^\d+$/.test(part)) { a = b = +part; }
+    else throw new Error(`Не понимаю диапазон «${part}»`);
+    if (a < 1 || b > max || a > b) throw new Error(`Диапазон «${part}» вне документа (страниц: ${max})`);
+    return Array.from({ length: b - a + 1 }, (_, i) => a - 1 + i);
+  });
+}
+
+const opt = id => $(id).value;
+const setStatus = (msg, cls = '') => { $('status').textContent = msg; $('status').className = 'status ' + cls; };
+
+// ---------- tools ----------
+const TOOLS = [
+  {
+    id: 'merge', icon: '⧉', name: 'Объединить PDF', desc: 'Соедините несколько PDF в один файл в нужном порядке.',
+    accept: '.pdf,application/pdf', multiple: true, min: 2,
+    async run(files) {
+      const out = await PDFDocument.create();
+      for (const f of files) {
+        const src = await loadPdf(f);
+        (await out.copyPages(src, src.getPageIndices())).forEach(p => out.addPage(p));
+      }
+      download(await out.save(), 'merged.pdf');
+    }
+  },
+  {
+    id: 'split', icon: '✂', name: 'Разделить PDF', desc: 'Каждую страницу — в отдельный файл или по своим диапазонам.',
+    accept: '.pdf,application/pdf',
+    options: `<label>Режим<select id="splitMode"><option value="each">Каждая страница отдельно</option><option value="ranges">По диапазонам</option></select></label>
+      <label>Диапазоны (например: 1-3, 5, 8-)<input id="splitRanges" placeholder="1-3, 5, 8-"></label>`,
+    async run([f]) {
+      const src = await loadPdf(f);
+      const n = src.getPageCount();
+      const groups = opt('splitMode') === 'each' ? src.getPageIndices().map(i => [i]) : parseRanges(opt('splitRanges'), n);
+      if (!groups.length) throw new Error('Укажите хотя бы один диапазон');
+      const entries = [];
+      for (const g of groups) {
+        const out = await PDFDocument.create();
+        (await out.copyPages(src, g)).forEach(p => out.addPage(p));
+        const label = g.length === 1 ? g[0] + 1 : `${g[0] + 1}-${g[g.length - 1] + 1}`;
+        entries.push({ name: `${baseName(f)}_${label}.pdf`, data: await out.save() });
+      }
+      await downloadMany(entries, `${baseName(f)}_split.zip`);
+    }
+  },
+  {
+    id: 'organize', icon: '▦', name: 'Упорядочить страницы', desc: 'Перетаскивайте, поворачивайте и удаляйте страницы.',
+    accept: '.pdf,application/pdf', thumbs: true,
+    async run([f]) {
+      if (!state.pages.length) throw new Error('Не осталось ни одной страницы');
+      const src = await loadPdf(f);
+      const out = await PDFDocument.create();
+      const copied = await out.copyPages(src, state.pages.map(p => p.i));
+      copied.forEach((p, k) => {
+        p.setRotation(degrees((p.getRotation().angle + state.pages[k].rot) % 360));
+        out.addPage(p);
+      });
+      download(await out.save(), `${baseName(f)}_edited.pdf`);
+    }
+  },
+  {
+    id: 'compress', icon: '⇲', name: 'Сжать PDF', desc: 'Уменьшите размер файла. Страницы станут изображениями.',
+    accept: '.pdf,application/pdf',
+    options: `<label>Степень сжатия<select id="cq"><option value="strong">Сильная</option><option value="medium" selected>Средняя</option><option value="light">Слабая</option></select></label>
+      <p class="hint">Текст после сжатия нельзя будет выделить. Для сжатия без потерь нужен сервер (Ghostscript).</p>`,
+    async run([f]) {
+      const { scale, q } = { strong: { scale: 1, q: .5 }, medium: { scale: 1.5, q: .65 }, light: { scale: 2, q: .8 } }[opt('cq')];
+      const pdf = await loadPdfJs(f);
+      const out = await PDFDocument.create();
+      for (let i = 1; i <= pdf.numPages; i++) {
+        setStatus(`Страница ${i} из ${pdf.numPages}…`);
+        const base = (await pdf.getPage(i)).getViewport({ scale: 1 });
+        const img = await out.embedJpg(await canvasBytes(await renderPage(pdf, i, scale), 'image/jpeg', q));
+        out.addPage([base.width, base.height]).drawImage(img, { x: 0, y: 0, width: base.width, height: base.height });
+      }
+      const bytes = await out.save();
+      if (bytes.length >= f.size) throw new Error(`Файл уже хорошо сжат: результат (${fmtSize(bytes.length)}) не меньше исходника`);
+      download(bytes, `${baseName(f)}_compressed.pdf`);
+      return `Готово: ${fmtSize(f.size)} → ${fmtSize(bytes.length)} (−${Math.round(100 - bytes.length / f.size * 100)}%)`;
+    }
+  },
+  {
+    id: 'pdf2jpg', icon: '🖼', name: 'PDF в JPG', desc: 'Сохраните каждую страницу как картинку.',
+    accept: '.pdf,application/pdf',
+    options: `<label>Качество<select id="jq"><option value="1">Обычное</option><option value="2" selected>Высокое</option><option value="3">Максимальное</option></select></label>`,
+    async run([f]) {
+      const pdf = await loadPdfJs(f);
+      const entries = [];
+      for (let i = 1; i <= pdf.numPages; i++) {
+        setStatus(`Страница ${i} из ${pdf.numPages}…`);
+        entries.push({ name: `${baseName(f)}_${i}.jpg`, type: 'image/jpeg', data: await canvasBytes(await renderPage(pdf, i, +opt('jq')), 'image/jpeg', .92) });
+      }
+      await downloadMany(entries, `${baseName(f)}_jpg.zip`);
+    }
+  },
+  {
+    id: 'img2pdf', icon: '⎙', name: 'JPG в PDF', desc: 'Соберите картинки (JPG, PNG, WebP) в один PDF.',
+    accept: 'image/*', multiple: true,
+    options: `<label>Размер страницы<select id="ps"><option value="fit">По размеру картинки</option><option value="a4">A4 с полями</option></select></label>`,
+    async run(files) {
+      const out = await PDFDocument.create();
+      for (const f of files) {
+        let img;
+        if (f.type === 'image/jpeg') img = await out.embedJpg(await f.arrayBuffer());
+        else if (f.type === 'image/png') img = await out.embedPng(await f.arrayBuffer());
+        else {
+          const bmp = await createImageBitmap(f);
+          const c = Object.assign(document.createElement('canvas'), { width: bmp.width, height: bmp.height });
+          c.getContext('2d').drawImage(bmp, 0, 0);
+          img = await out.embedPng(await canvasBytes(c, 'image/png'));
+        }
+        if (opt('ps') === 'fit') {
+          out.addPage([img.width, img.height]).drawImage(img, { x: 0, y: 0, width: img.width, height: img.height });
+        } else {
+          const landscape = img.width > img.height;
+          const [W, H] = landscape ? [841.89, 595.28] : [595.28, 841.89];
+          const m = 36, s = Math.min((W - 2 * m) / img.width, (H - 2 * m) / img.height);
+          const w = img.width * s, h = img.height * s;
+          out.addPage([W, H]).drawImage(img, { x: (W - w) / 2, y: (H - h) / 2, width: w, height: h });
+        }
+      }
+      download(await out.save(), 'images.pdf');
+    }
+  },
+  {
+    id: 'watermark', icon: '💧', name: 'Водяной знак', desc: 'Добавьте текст поверх каждой страницы.',
+    accept: '.pdf,application/pdf',
+    options: `<label>Текст<input id="wt" value="КОНФИДЕНЦИАЛЬНО"></label>
+      <div class="row">
+        <label>Цвет<input type="color" id="wc" value="#d92d20"></label>
+        <label>Прозрачность<input type="range" id="wo" min="0.05" max="1" step="0.05" value="0.25"></label>
+        <label>Размер<select id="wsz"><option value="0.4">Маленький</option><option value="0.65" selected>Средний</option><option value="0.9">Большой</option></select></label>
+        <label>Наклон<select id="wa"><option value="45" selected>45°</option><option value="0">Горизонтально</option></select></label>
+      </div>`,
+    async run([f]) {
+      const text = opt('wt').trim();
+      if (!text) throw new Error('Введите текст водяного знака');
+      // Рисуем текст на canvas, чтобы поддержать кириллицу без встраивания шрифтов
+      const c = document.createElement('canvas'), ctx = c.getContext('2d');
+      const font = 'bold 120px system-ui, sans-serif';
+      ctx.font = font;
+      c.width = Math.ceil(ctx.measureText(text).width) + 20; c.height = 160;
+      ctx.font = font; ctx.fillStyle = opt('wc'); ctx.textBaseline = 'middle';
+      ctx.fillText(text, 10, 80);
+
+      const doc = await loadPdf(f);
+      const img = await doc.embedPng(await canvasBytes(c, 'image/png'));
+      const angle = +opt('wa'), rad = angle * Math.PI / 180;
+      for (const page of doc.getPages()) {
+        const { width: W, height: H } = page.getSize();
+        const w = W * +opt('wsz'), h = w * c.height / c.width;
+        // pdf-lib вращает вокруг левого нижнего угла — смещаем, чтобы центр совпал с центром страницы
+        const x = W / 2 - (w / 2 * Math.cos(rad) - h / 2 * Math.sin(rad));
+        const y = H / 2 - (w / 2 * Math.sin(rad) + h / 2 * Math.cos(rad));
+        page.drawImage(img, { x, y, width: w, height: h, rotate: degrees(angle), opacity: +opt('wo') });
+      }
+      download(await doc.save(), `${baseName(f)}_watermark.pdf`);
+    }
+  },
+  {
+    id: 'numbers', icon: '#', name: 'Номера страниц', desc: 'Пронумеруйте страницы документа.',
+    accept: '.pdf,application/pdf',
+    options: `<div class="row">
+        <label>Положение<select id="np"><option value="bc">Снизу по центру</option><option value="br">Снизу справа</option><option value="tr">Сверху справа</option></select></label>
+        <label>Формат<select id="nf"><option value="n">1</option><option value="nN">1 / 10</option></select></label>
+        <label>Начать с<input type="number" id="ns" value="1" min="1"></label>
+      </div>`,
+    async run([f]) {
+      const doc = await loadPdf(f);
+      const font = await doc.embedFont(StandardFonts.Helvetica);
+      const pages = doc.getPages(), start = +opt('ns') || 1, size = 11, m = 24;
+      pages.forEach((page, i) => {
+        const label = opt('nf') === 'nN' ? `${start + i} / ${start + pages.length - 1}` : String(start + i);
+        const { width: W, height: H } = page.getSize();
+        const tw = font.widthOfTextAtSize(label, size);
+        const pos = { bc: [(W - tw) / 2, m], br: [W - tw - m, m], tr: [W - tw - m, H - m - size] }[opt('np')];
+        page.drawText(label, { x: pos[0], y: pos[1], size, font, color: rgb(0.2, 0.2, 0.2) });
+      });
+      download(await doc.save(), `${baseName(f)}_numbered.pdf`);
+    }
+  },
+];
+
+// ---------- UI ----------
+$('toolGrid').innerHTML = TOOLS.map(t =>
+  `<button class="card" data-id="${t.id}"><div class="ic">${t.icon}</div><b>${t.name}</b><small>${t.desc}</small></button>`).join('');
+$('toolGrid').addEventListener('click', e => { const c = e.target.closest('.card'); if (c) openTool(c.dataset.id); });
+$('back').onclick = $('logo').onclick = () => { location.hash = ''; };
+window.addEventListener('hashchange', route);
+
+function route() {
+  const t = TOOLS.find(t => '#' + t.id === location.hash);
+  $('home').classList.toggle('hidden', !!t);
+  $('tool').classList.toggle('hidden', !t);
+  if (!t) return;
+  state.tool = t; state.files = []; state.pages = [];
+  $('toolTitle').textContent = t.name;
+  $('toolDesc').textContent = t.desc;
+  $('input').accept = t.accept; $('input').multiple = !!t.multiple;
+  $('pick').textContent = t.multiple ? 'Выбрать файлы' : 'Выбрать файл';
+  $('opts').innerHTML = t.options || '';
+  setStatus(''); renderFiles();
+}
+function openTool(id) { location.hash = id; }
+
+$('pick').onclick = e => { e.stopPropagation(); $('input').click(); };
+$('drop').onclick = () => $('input').click();
+$('drop').onkeydown = e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); $('input').click(); } };
+$('input').onchange = e => { addFiles([...e.target.files]); e.target.value = ''; };
+['dragenter', 'dragover'].forEach(ev => $('drop').addEventListener(ev, e => { e.preventDefault(); $('drop').classList.add('over'); }));
+['dragleave', 'drop'].forEach(ev => $('drop').addEventListener(ev, e => { e.preventDefault(); $('drop').classList.remove('over'); }));
+$('drop').addEventListener('drop', e => addFiles([...e.dataTransfer.files]));
+
+function addFiles(list) {
+  const t = state.tool;
+  const ok = list.filter(f => t.accept.includes('image') ? f.type.startsWith('image/') : (f.type === 'application/pdf' || /\.pdf$/i.test(f.name)));
+  if (ok.length < list.length) setStatus('Некоторые файлы пропущены: неподходящий формат', 'err'); else setStatus('');
+  if (!ok.length) return;
+  state.files = t.multiple ? state.files.concat(ok) : [ok[0]];
+  renderFiles();
+  if (t.thumbs) loadThumbs(state.files[0]);
+}
+
+function renderFiles() {
+  const t = state.tool, files = state.files;
+  $('files').innerHTML = files.map((f, i) => `<li><span class="name">📄 ${f.name.replace(/</g, '&lt;')}</span><span class="size">${fmtSize(f.size)}</span>
+    ${t.multiple ? `<button class="icon-btn" data-act="up" data-i="${i}" title="Выше" ${i ? '' : 'disabled'}>↑</button><button class="icon-btn" data-act="down" data-i="${i}" title="Ниже" ${i < files.length - 1 ? '' : 'disabled'}>↓</button>` : ''}
+    <button class="icon-btn" data-act="del" data-i="${i}" title="Убрать">✕</button></li>`).join('');
+  if (!files.length) $('pages').innerHTML = '';
+  $('run').disabled = files.length < (t.min || 1);
+  $('run').textContent = t.name;
+}
+
+$('files').addEventListener('click', e => {
+  const b = e.target.closest('button'); if (!b) return;
+  const i = +b.dataset.i, f = state.files;
+  if (b.dataset.act === 'del') { f.splice(i, 1); state.pages = []; }
+  if (b.dataset.act === 'up') [f[i - 1], f[i]] = [f[i], f[i - 1]];
+  if (b.dataset.act === 'down') [f[i + 1], f[i]] = [f[i], f[i + 1]];
+  renderFiles();
+});
+
+// ---------- организация страниц ----------
+async function loadThumbs(file) {
+  $('pages').innerHTML = ''; setStatus('Загружаю страницы…');
+  try {
+    const pdf = await loadPdfJs(file);
+    state.pages = [];
+    for (let i = 1; i <= pdf.numPages; i++) {
+      const canvas = await renderPage(pdf, i, 0.3);
+      state.pages.push({ i: i - 1, rot: 0, canvas });
+    }
+    renderPages(); setStatus('');
+  } catch (err) { setStatus('Не удалось открыть PDF: ' + err.message, 'err'); }
+}
+
+let dragFrom = null;
+function renderPages() {
+  const box = $('pages'); box.innerHTML = '';
+  state.pages.forEach((p, k) => {
+    const el = document.createElement('div');
+    el.className = 'page'; el.draggable = true;
+    el.innerHTML = `<div class="thumb"></div><div class="tools">
+      <button class="icon-btn" data-act="rot" title="Повернуть">↻</button><span>${p.i + 1}</span>
+      <button class="icon-btn" data-act="del" title="Удалить">✕</button></div>`;
+    p.canvas.style.transform = `rotate(${p.rot}deg)`;
+    el.querySelector('.thumb').appendChild(p.canvas);
+    el.querySelector('[data-act=rot]').onclick = () => { p.rot = (p.rot + 90) % 360; p.canvas.style.transform = `rotate(${p.rot}deg)`; };
+    el.querySelector('[data-act=del]').onclick = () => { state.pages.splice(k, 1); renderPages(); };
+    el.ondragstart = () => { dragFrom = k; el.classList.add('dragging'); };
+    el.ondragend = () => el.classList.remove('dragging');
+    el.ondragover = e => e.preventDefault();
+    el.ondrop = e => {
+      e.preventDefault();
+      if (dragFrom === null || dragFrom === k) return;
+      const [moved] = state.pages.splice(dragFrom, 1);
+      state.pages.splice(k, 0, moved); dragFrom = null; renderPages();
+    };
+    box.appendChild(el);
+  });
+}
+
+// ---------- запуск ----------
+$('run').onclick = async () => {
+  $('run').disabled = true; setStatus('Обрабатываю…');
+  try {
+    const msg = await state.tool.run(state.files);
+    setStatus(msg || 'Готово! Файл скачан.', 'ok');
+  } catch (err) {
+    console.error(err);
+    const enc = /encrypt/i.test(err.message);
+    setStatus(enc ? 'Файл защищён паролем — снимите защиту и попробуйте снова' : 'Ошибка: ' + err.message, 'err');
+  } finally { $('run').disabled = false; }
+};
+
+route();
+</script>
+</body>
+</html>

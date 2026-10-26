@@ -1,0 +1,61 @@
+{
+  "name": "pdf-master",
+  "productName": "PDF Мастер",
+  "version": "0.1.0",
+  "description": "Инструменты для PDF: объединение, разделение, сжатие, конвертация",
+  "main": "main.js",
+  "author": "Timofey Petrov",
+  "license": "UNLICENSED",
+  "scripts": {
+    "postinstall": "node scripts/vendor.js",
+    "start": "electron .",
+    "dist:mac": "electron-builder --mac",
+    "dist:win": "electron-builder --win",
+    "dist": "electron-builder --mac --win"
+  },
+  "build": {
+    "appId": "com.timofey.pdfmaster",
+    "productName": "PDF Мастер",
+    "files": [
+      "main.js",
+      "src/**/*"
+    ],
+    "directories": {
+      "output": "dist"
+    },
+    "mac": {
+      "target": [
+        {
+          "target": "dmg",
+          "arch": [
+            "arm64",
+            "x64"
+          ]
+        }
+      ],
+      "category": "public.app-category.productivity"
+    },
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ]
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true
+    },
+    "artifactName": "PDF-Master-${version}-${arch}.${ext}"
+  },
+  "devDependencies": {
+    "electron": "^45.0.0",
+    "electron-builder": "^26.18.0",
+    "jszip": "^3.10.1",
+    "pdf-lib": "^1.17.1",
+    "pdfjs-dist": "^3.11.174"
+  }
+}
