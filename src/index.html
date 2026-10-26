@@ -71,6 +71,8 @@
   .status.ok { color: var(--ok); }
   .hint { color: var(--muted); font-size: 13px; margin: 0; }
   .hidden { display: none !important; }
+  .back:disabled { opacity: .4; cursor: default; }
+  body.busy .drop, body.busy .files, body.busy .pages, body.busy .opts { pointer-events: none; opacity: .6; }
 </style>
 </head>
 <body>
@@ -139,6 +141,30 @@ async function renderPage(pdf, n, scale) {
   ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, canvas.width, canvas.height);
   await page.render({ canvasContext: ctx, viewport: vp }).promise;
   return canvas;
+}
+
+// Видимая область страницы (CropBox) с учётом поворота: W×H как видит пользователь,
+// toPdf(u, v) переводит «экранные» координаты (от левого нижнего угла) в координаты PDF
+function pageFrame(page) {
+  const { x: bx, y: by, width: w, height: h } = page.getCropBox();
+  const r = ((Math.round(page.getRotation().angle / 90) * 90) % 360 + 360) % 360;
+  const swap = r === 90 || r === 270;
+  const toPdf = (u, v) => {
+    const [x, y] = { 0: [u, v], 90: [w - v, u], 180: [w - u, h - v], 270: [v, h - u] }[r];
+    return { x: bx + x, y: by + y };
+  };
+  return { W: swap ? h : w, H: swap ? w : h, r, toPdf };
+}
+
+// Сообщение для пользователя, а не ошибка (например, «файл уже сжат»)
+class Notice extends Error {}
+
+function humanError(err) {
+  const m = String(err && err.message || err);
+  if (err && err.name === 'PasswordException' || /encrypt/i.test(m)) return 'Файл защищён паролем — снимите защиту и попробуйте снова';
+  if (/PDF header|Invalid PDF|parse PDF|Invalid XRef|startxref/i.test(m)) return 'Файл повреждён или это не PDF';
+  if (err && err.name === 'InvalidStateError' || /could not be decoded|SOI not found/i.test(m)) return 'Не удалось прочитать изображение. Поддерживаются JPG, PNG, WebP и GIF';
+  return 'Ошибка: ' + m;
 }
 
 const canvasBytes = (canvas, type = 'image/jpeg', q = 0.9) =>
@@ -218,16 +244,18 @@ const TOOLS = [
       const { scale, q } = { strong: { scale: 1, q: .5 }, medium: { scale: 1.5, q: .65 }, light: { scale: 2, q: .8 } }[opt('cq')];
       const pdf = await loadPdfJs(f);
       const out = await PDFDocument.create();
-      for (let i = 1; i <= pdf.numPages; i++) {
-        setStatus(`Страница ${i} из ${pdf.numPages}…`);
-        const base = (await pdf.getPage(i)).getViewport({ scale: 1 });
-        const img = await out.embedJpg(await canvasBytes(await renderPage(pdf, i, scale), 'image/jpeg', q));
-        out.addPage([base.width, base.height]).drawImage(img, { x: 0, y: 0, width: base.width, height: base.height });
-      }
+      try {
+        for (let i = 1; i <= pdf.numPages; i++) {
+          setStatus(`Страница ${i} из ${pdf.numPages}…`);
+          const base = (await pdf.getPage(i)).getViewport({ scale: 1 });
+          const img = await out.embedJpg(await canvasBytes(await renderPage(pdf, i, scale), 'image/jpeg', q));
+          out.addPage([base.width, base.height]).drawImage(img, { x: 0, y: 0, width: base.width, height: base.height });
+        }
+      } finally { pdf.destroy(); }
       const bytes = await out.save();
-      if (bytes.length >= f.size) throw new Error(`Файл уже хорошо сжат: результат (${fmtSize(bytes.length)}) не меньше исходника`);
+      if (bytes.length >= f.size) throw new Notice(`Этот файл уже хорошо сжат: сжатие не уменьшит его (${fmtSize(f.size)}). Файл не изменён.`);
       download(bytes, `${baseName(f)}_compressed.pdf`);
-      return `Готово: ${fmtSize(f.size)} → ${fmtSize(bytes.length)} (−${Math.round(100 - bytes.length / f.size * 100)}%)`;
+      return `Готово: ${fmtSize(f.size)} → ${fmtSize(bytes.length)} (−${Math.min(99, Math.round(100 - bytes.length / f.size * 100))}%)`;
     }
   },
   {
@@ -237,10 +265,12 @@ const TOOLS = [
     async run([f]) {
       const pdf = await loadPdfJs(f);
       const entries = [];
-      for (let i = 1; i <= pdf.numPages; i++) {
-        setStatus(`Страница ${i} из ${pdf.numPages}…`);
-        entries.push({ name: `${baseName(f)}_${i}.jpg`, type: 'image/jpeg', data: await canvasBytes(await renderPage(pdf, i, +opt('jq')), 'image/jpeg', .92) });
-      }
+      try {
+        for (let i = 1; i <= pdf.numPages; i++) {
+          setStatus(`Страница ${i} из ${pdf.numPages}…`);
+          entries.push({ name: `${baseName(f)}_${i}.jpg`, type: 'image/jpeg', data: await canvasBytes(await renderPage(pdf, i, +opt('jq')), 'image/jpeg', .92) });
+        }
+      } finally { pdf.destroy(); }
       await downloadMany(entries, `${baseName(f)}_jpg.zip`);
     }
   },
@@ -298,12 +328,12 @@ const TOOLS = [
       const img = await doc.embedPng(await canvasBytes(c, 'image/png'));
       const angle = +opt('wa'), rad = angle * Math.PI / 180;
       for (const page of doc.getPages()) {
-        const { width: W, height: H } = page.getSize();
+        const { W, H, r, toPdf } = pageFrame(page);
         const w = W * +opt('wsz'), h = w * c.height / c.width;
         // pdf-lib вращает вокруг левого нижнего угла — смещаем, чтобы центр совпал с центром страницы
-        const x = W / 2 - (w / 2 * Math.cos(rad) - h / 2 * Math.sin(rad));
-        const y = H / 2 - (w / 2 * Math.sin(rad) + h / 2 * Math.cos(rad));
-        page.drawImage(img, { x, y, width: w, height: h, rotate: degrees(angle), opacity: +opt('wo') });
+        const { x, y } = toPdf(W / 2 - (w / 2 * Math.cos(rad) - h / 2 * Math.sin(rad)),
+                               H / 2 - (w / 2 * Math.sin(rad) + h / 2 * Math.cos(rad)));
+        page.drawImage(img, { x, y, width: w, height: h, rotate: degrees(angle + r), opacity: +opt('wo') });
       }
       download(await doc.save(), `${baseName(f)}_watermark.pdf`);
     }
@@ -322,10 +352,11 @@ const TOOLS = [
       const pages = doc.getPages(), start = +opt('ns') || 1, size = 11, m = 24;
       pages.forEach((page, i) => {
         const label = opt('nf') === 'nN' ? `${start + i} / ${start + pages.length - 1}` : String(start + i);
-        const { width: W, height: H } = page.getSize();
+        const { W, H, r, toPdf } = pageFrame(page);
         const tw = font.widthOfTextAtSize(label, size);
         const pos = { bc: [(W - tw) / 2, m], br: [W - tw - m, m], tr: [W - tw - m, H - m - size] }[opt('np')];
-        page.drawText(label, { x: pos[0], y: pos[1], size, font, color: rgb(0.2, 0.2, 0.2) });
+        const { x, y } = toPdf(pos[0], pos[1]);
+        page.drawText(label, { x, y, size, font, rotate: degrees(r), color: rgb(0.2, 0.2, 0.2) });
       });
       download(await doc.save(), `${baseName(f)}_numbered.pdf`);
     }
@@ -336,7 +367,7 @@ const TOOLS = [
 $('toolGrid').innerHTML = TOOLS.map(t =>
   `<button class="card" data-id="${t.id}"><div class="ic">${t.icon}</div><b>${t.name}</b><small>${t.desc}</small></button>`).join('');
 $('toolGrid').addEventListener('click', e => { const c = e.target.closest('.card'); if (c) openTool(c.dataset.id); });
-$('back').onclick = $('logo').onclick = () => { location.hash = ''; };
+$('back').onclick = $('logo').onclick = () => { if (!document.body.classList.contains('busy')) location.hash = ''; };
 window.addEventListener('hashchange', route);
 
 function route() {
@@ -392,17 +423,23 @@ $('files').addEventListener('click', e => {
 });
 
 // ---------- организация страниц ----------
+let thumbsJob = 0;
 async function loadThumbs(file) {
-  $('pages').innerHTML = ''; setStatus('Загружаю страницы…');
+  const job = ++thumbsJob; // если за это время выбрали другой файл — старую загрузку бросаем
+  $('pages').innerHTML = ''; state.pages = []; setStatus('Загружаю страницы…');
+  let pdf;
   try {
-    const pdf = await loadPdfJs(file);
-    state.pages = [];
+    pdf = await loadPdfJs(file);
+    const pages = [];
     for (let i = 1; i <= pdf.numPages; i++) {
-      const canvas = await renderPage(pdf, i, 0.3);
-      state.pages.push({ i: i - 1, rot: 0, canvas });
+      if (job !== thumbsJob) return;
+      pages.push({ i: i - 1, rot: 0, canvas: await renderPage(pdf, i, 0.3) });
     }
-    renderPages(); setStatus('');
-  } catch (err) { setStatus('Не удалось открыть PDF: ' + err.message, 'err'); }
+    if (job !== thumbsJob) return;
+    state.pages = pages; renderPages(); setStatus('');
+  } catch (err) {
+    if (job === thumbsJob) setStatus(humanError(err), 'err');
+  } finally { if (pdf) pdf.destroy(); }
 }
 
 let dragFrom = null;
@@ -433,16 +470,22 @@ function renderPages() {
 
 // ---------- запуск ----------
 $('run').onclick = async () => {
-  $('run').disabled = true; setStatus('Обрабатываю…');
+  // Пока идёт обработка, не даём уйти на другой инструмент: его настройки подменили бы текущие
+  $('run').disabled = $('back').disabled = true; document.body.classList.add('busy');
+  setStatus('Обрабатываю…');
   try {
     const msg = await state.tool.run(state.files);
     setStatus(msg || 'Готово! Файл скачан.', 'ok');
   } catch (err) {
-    console.error(err);
-    const enc = /encrypt/i.test(err.message);
-    setStatus(enc ? 'Файл защищён паролем — снимите защиту и попробуйте снова' : 'Ошибка: ' + err.message, 'err');
-  } finally { $('run').disabled = false; }
+    if (err instanceof Notice) setStatus(err.message);
+    else { console.error(err); setStatus(humanError(err), 'err'); }
+  } finally {
+    $('run').disabled = $('back').disabled = false; document.body.classList.remove('busy');
+  }
 };
+
+// Файл, брошенный мимо зоны загрузки, не должен открываться вместо приложения
+['dragover', 'drop'].forEach(ev => document.addEventListener(ev, e => e.preventDefault()));
 
 route();
 </script>
